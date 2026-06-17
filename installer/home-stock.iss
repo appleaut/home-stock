@@ -18,6 +18,8 @@ DefaultGroupName={#MyAppNameEn}
 DisableProgramGroupPage=yes
 UninstallDisplayName={#MyAppNameEn}
 UninstallDisplayIcon={app}\{#MyAppExeName}
+; ไอคอนของตัวติดตั้งเอง (setup.exe)
+SetupIconFile=..\assets\icon.ico
 ; ติดตั้งระดับผู้ใช้ (ไม่ต้องใช้สิทธิ์ admin) แต่อนุญาตให้ผู้ใช้เลือกติดตั้งทั้งเครื่องได้
 PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog

@@ -1,0 +1,25 @@
+<svg width="256" height="256" viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#4CC2FF"/>
+      <stop offset="1" stop-color="#0067C0"/>
+    </linearGradient>
+  </defs>
+
+  <!-- พื้นหลังกระเบื้องแอปสไตล์ Windows 11 -->
+  <rect x="16" y="16" width="224" height="224" rx="44" fill="url(#bg)"/>
+
+  <!-- กล่องเก็บของ (มองเฉียงเล็กน้อย) -->
+  <g fill="none" stroke="#ffffff" stroke-width="11"
+     stroke-linejoin="round" stroke-linecap="round">
+    <!-- ฝากล่องด้านบน (รูปสี่เหลี่ยมขนมเปียกปูน) -->
+    <path d="M128 64 L196 96 L128 128 L60 96 Z" fill="#ffffff"/>
+    <!-- ด้านซ้ายของกล่อง -->
+    <path d="M60 96 L60 168 L128 200 L128 128 Z" fill="#ffffff" fill-opacity="0.82"/>
+    <!-- ด้านขวาของกล่อง -->
+    <path d="M196 96 L196 168 L128 200 L128 128 Z" fill="#ffffff" fill-opacity="0.62"/>
+  </g>
+
+  <!-- เส้นเทปกลางฝากล่อง -->
+  <path d="M128 64 L128 128" stroke="#0067C0" stroke-width="8" stroke-linecap="round"/>
+</svg>
