@@ -141,7 +141,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             .column(Column::auto().at_least(60.0)) // ขั้นต่ำ
             .column(Column::auto().at_least(90.0)) // บาร์โค้ด
             .column(Column::auto().at_least(100.0)) // หมดอายุ
-            .column(Column::remainder().at_least(120.0)) // จัดการ
+            .column(Column::remainder().at_least(160.0)) // จัดการ (ปุ่มแก้ไข+ลบ เรียงแนวนอน)
             .header(22.0, |mut header| {
                 for title in [
                     "ชื่อ", "หมวด", "ตำแหน่ง", "คงเหลือ", "หน่วย", "ขั้นต่ำ", "บาร์โค้ด",
@@ -154,7 +154,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             })
             .body(|mut body| {
                 for r in &rows {
-                    body.row(24.0, |mut row| {
+                    body.row(28.0, |mut row| {
                         row.col(|ui| {
                             ui.label(&r.name);
                         });
@@ -199,12 +199,15 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                             };
                         });
                         row.col(|ui| {
-                            if ui.button("✏ แก้ไข").clicked() {
-                                want_edit = Some(r.id);
-                            }
-                            if ui.button("🗑 ลบ").clicked() {
-                                want_delete = Some(r.id);
-                            }
+                            // ปุ่มแก้ไข/ลบ อยู่แนวนอนเดียวกัน
+                            ui.horizontal(|ui| {
+                                if ui.button("✏ แก้ไข").clicked() {
+                                    want_edit = Some(r.id);
+                                }
+                                if ui.button("🗑 ลบ").clicked() {
+                                    want_delete = Some(r.id);
+                                }
+                            });
                         });
                     });
                 }
