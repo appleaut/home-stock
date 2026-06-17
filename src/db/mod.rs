@@ -38,7 +38,16 @@ CREATE TABLE IF NOT EXISTS items (
     created_at   TEXT NOT NULL,
     updated_at   TEXT NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_items_barcode ON items(barcode);
+-- บาร์โค้ดค่าว่างให้เก็บเป็น NULL (NULL ซ้ำกันได้ตามต้องการ)
+UPDATE items SET barcode = NULL WHERE barcode IS NOT NULL AND TRIM(barcode) = '';
+-- ถ้ามีบาร์โค้ดซ้ำจากข้อมูลเดิม ให้คงตัวแรก (id น้อยสุด) ที่เหลือเคลียร์เป็น NULL
+-- เพื่อให้สร้าง unique index ได้สำเร็จ
+UPDATE items SET barcode = NULL
+ WHERE barcode IS NOT NULL
+   AND id NOT IN (SELECT MIN(id) FROM items WHERE barcode IS NOT NULL GROUP BY barcode);
+-- บังคับห้ามบาร์โค้ดซ้ำเฉพาะค่าที่ไม่ใช่ NULL (partial unique index)
+DROP INDEX IF EXISTS idx_items_barcode;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_items_barcode ON items(barcode) WHERE barcode IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS transactions (
     id        INTEGER PRIMARY KEY AUTOINCREMENT,

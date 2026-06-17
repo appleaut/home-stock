@@ -67,7 +67,12 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
 
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if ui.button("➕ เพิ่มของ").clicked() {
-                app.item_form = ItemForm::for_new();
+                let mut form = ItemForm::for_new();
+                // ออกบาร์โค้ดตัวเลข 5 หลักให้อัตโนมัติ (แก้ไขเองได้ภายหลัง)
+                if let Ok(code) = queries::next_barcode(&app.db.conn) {
+                    form.barcode = code;
+                }
+                app.item_form = form;
             }
         });
     });
@@ -342,7 +347,20 @@ fn item_form_window(app: &mut App, ctx: &egui::Context) {
                     ui.end_row();
 
                     ui.label("บาร์โค้ด");
-                    ui.text_edit_singleline(&mut app.item_form.barcode);
+                    ui.horizontal(|ui| {
+                        ui.text_edit_singleline(&mut app.item_form.barcode);
+                        // ปุ่มออกรหัสใหม่ (เฉพาะตอนเพิ่มของใหม่)
+                        if app.item_form.editing_id.is_none()
+                            && ui
+                                .button("🔄")
+                                .on_hover_text("ออกบาร์โค้ด 5 หลักใหม่")
+                                .clicked()
+                        {
+                            if let Ok(code) = queries::next_barcode(&app.db.conn) {
+                                app.item_form.barcode = code;
+                            }
+                        }
+                    });
                     ui.end_row();
 
                     ui.label("วันหมดอายุ");

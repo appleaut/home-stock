@@ -1,7 +1,7 @@
 //! ฟังก์ชัน query ทั้งหมด: CRUD, check-in/out (atomic), และ query สำหรับแจ้งเตือน/รายงาน
 
 use anyhow::{bail, Result};
-use rusqlite::{params, Connection, Row};
+use rusqlite::{params, Connection, OptionalExtension, Row};
 
 use super::models::{Category, Item, Location, Transaction, TxType, User};
 
@@ -128,6 +128,34 @@ pub fn find_by_barcode(conn: &Connection, barcode: &str) -> Result<Option<Item>>
     }
 }
 
+/// สร้างบาร์โค้ดเป็นตัวเลข 5 หลักที่ยังไม่ถูกใช้ (ช่วง 10000–99999)
+/// ใช้ค่าสูงสุดที่มีอยู่ + 1 แล้วหาเลขว่างถัดไป (กันชนและเผื่อช่องว่าง)
+pub fn next_barcode(conn: &Connection) -> Result<String> {
+    // หาเลขสูงสุดในบรรดาบาร์โค้ดที่เป็นตัวเลข 5 หลัก (ไม่ขึ้นต้นด้วย 0)
+    let max: Option<i64> = conn.query_row(
+        "SELECT MAX(CAST(barcode AS INTEGER)) FROM items \
+         WHERE barcode GLOB '[1-9][0-9][0-9][0-9][0-9]'",
+        [],
+        |r| r.get(0),
+    )?;
+    let mut candidate = max.unwrap_or(9999) + 1;
+    if candidate < 10000 {
+        candidate = 10000;
+    }
+    // เดินหาเลขว่างถัดไป (วนกลับไป 10000 เมื่อถึง 99999)
+    for _ in 0..90000 {
+        if candidate > 99999 {
+            candidate = 10000;
+        }
+        let code = candidate.to_string();
+        if find_by_barcode(conn, &code)?.is_none() {
+            return Ok(code);
+        }
+        candidate += 1;
+    }
+    bail!("ไม่มีบาร์โค้ด 5 หลักว่างเหลือแล้ว");
+}
+
 /// อาร์กิวเมนต์สำหรับเพิ่ม/แก้ไขรายการของ
 pub struct ItemInput {
     pub name: String,
@@ -140,9 +168,37 @@ pub struct ItemInput {
     pub expiry_date: Option<String>,
 }
 
+/// แปลงบาร์โค้ดให้เป็นรูปแบบมาตรฐาน: ตัดช่องว่าง และค่าว่าง → None (NULL)
+/// (NULL ซ้ำกันได้ ส่วนค่าที่ไม่ว่างต้องไม่ซ้ำ)
+fn normalize_barcode(barcode: &Option<String>) -> Option<String> {
+    barcode
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+}
+
+/// ตรวจว่าบาร์โค้ด (ที่ไม่ว่าง) ถูกใช้กับรายการอื่นอยู่แล้วหรือไม่
+fn barcode_taken(conn: &Connection, barcode: &str, exclude_id: Option<i64>) -> Result<bool> {
+    let found = conn
+        .query_row(
+            "SELECT 1 FROM items WHERE barcode = ?1 AND id <> ?2 LIMIT 1",
+            params![barcode, exclude_id.unwrap_or(-1)],
+            |_| Ok(()),
+        )
+        .optional()?;
+    Ok(found.is_some())
+}
+
 pub fn add_item(conn: &Connection, input: &ItemInput) -> Result<i64> {
     if input.name.trim().is_empty() {
         bail!("ต้องระบุชื่อของ");
+    }
+    let barcode = normalize_barcode(&input.barcode);
+    if let Some(bc) = &barcode {
+        if barcode_taken(conn, bc, None)? {
+            bail!("บาร์โค้ด \"{}\" ถูกใช้กับรายการอื่นแล้ว", bc);
+        }
     }
     let now = now_iso();
     conn.execute(
@@ -156,7 +212,7 @@ pub fn add_item(conn: &Connection, input: &ItemInput) -> Result<i64> {
             input.unit,
             input.quantity,
             input.min_quantity,
-            input.barcode,
+            barcode,
             input.expiry_date,
             now,
         ],
@@ -168,6 +224,12 @@ pub fn update_item(conn: &Connection, id: i64, input: &ItemInput) -> Result<()> 
     if input.name.trim().is_empty() {
         bail!("ต้องระบุชื่อของ");
     }
+    let barcode = normalize_barcode(&input.barcode);
+    if let Some(bc) = &barcode {
+        if barcode_taken(conn, bc, Some(id))? {
+            bail!("บาร์โค้ด \"{}\" ถูกใช้กับรายการอื่นแล้ว", bc);
+        }
+    }
     conn.execute(
         "UPDATE items SET name=?1, category_id=?2, location_id=?3, unit=?4, \
          quantity=?5, min_quantity=?6, barcode=?7, expiry_date=?8, updated_at=?9 WHERE id=?10",
@@ -178,7 +240,7 @@ pub fn update_item(conn: &Connection, id: i64, input: &ItemInput) -> Result<()> 
             input.unit,
             input.quantity,
             input.min_quantity,
-            input.barcode,
+            barcode,
             input.expiry_date,
             now_iso(),
             id,
@@ -243,8 +305,9 @@ pub fn check_out(
         bail!("จำนวนคงเหลือไม่พอ (เหลือ {})", current);
     }
     let now = now_iso();
+    // เบิกออกแล้วเคลียร์บาร์โค้ดเป็น NULL (ปล่อยเลขคืน — NULL ซ้ำกันได้)
     tx.execute(
-        "UPDATE items SET quantity = quantity - ?1, updated_at = ?2 WHERE id = ?3",
+        "UPDATE items SET quantity = quantity - ?1, barcode = NULL, updated_at = ?2 WHERE id = ?3",
         params![qty, now, item_id],
     )?;
     tx.execute(
@@ -391,6 +454,98 @@ mod tests {
         let id = add_item(&db.conn, &sample_item("เกลือ", 5, 1)).unwrap();
         assert!(check_out(&db.conn, id, None, 0, "").is_err());
         assert!(check_in(&db.conn, id, None, -2, "").is_err());
+    }
+
+    #[test]
+    fn next_barcode_starts_at_10000_and_skips_used() {
+        let db = Db::open_in_memory().unwrap();
+        // ยังไม่มีของ → ได้ 10000
+        assert_eq!(next_barcode(&db.conn).unwrap(), "10000");
+
+        // เพิ่มของที่ใช้บาร์โค้ด 10000 → ตัวถัดไปต้องเป็น 10001
+        let mut a = sample_item("ของ ก", 1, 0);
+        a.barcode = Some("10000".to_string());
+        add_item(&db.conn, &a).unwrap();
+        assert_eq!(next_barcode(&db.conn).unwrap(), "10001");
+
+        // บาร์โค้ดที่ไม่ใช่ตัวเลข 5 หลักต้องไม่ถูกนับ
+        let mut b = sample_item("ของ ข", 1, 0);
+        b.barcode = Some("ABC".to_string());
+        add_item(&db.conn, &b).unwrap();
+        assert_eq!(next_barcode(&db.conn).unwrap(), "10001");
+    }
+
+    #[test]
+    fn barcode_unique_when_present_but_empty_can_repeat() {
+        let db = Db::open_in_memory().unwrap();
+
+        // บาร์โค้ดไม่ว่าง ห้ามซ้ำ
+        let mut a = sample_item("ของ ก", 1, 0);
+        a.barcode = Some("10000".to_string());
+        add_item(&db.conn, &a).unwrap();
+
+        let mut b = sample_item("ของ ข", 1, 0);
+        b.barcode = Some("10000".to_string());
+        assert!(add_item(&db.conn, &b).is_err(), "บาร์โค้ดซ้ำต้องถูกปฏิเสธ");
+
+        // ค่าว่าง (รวมถึงสตริงว่าง/ช่องว่าง → NULL) ซ้ำกันได้หลายตัว
+        let mut c = sample_item("ของ ค", 1, 0);
+        c.barcode = Some("".to_string());
+        let mut d = sample_item("ของ ง", 1, 0);
+        d.barcode = Some("   ".to_string());
+        let e = sample_item("ของ จ", 1, 0); // None
+        add_item(&db.conn, &c).unwrap();
+        add_item(&db.conn, &d).unwrap();
+        add_item(&db.conn, &e).unwrap();
+
+        // ค่าว่างทั้งหมดต้องเก็บเป็น NULL
+        let empties = list_items(&db.conn)
+            .unwrap()
+            .into_iter()
+            .filter(|i| i.barcode.is_none())
+            .count();
+        assert_eq!(empties, 3);
+    }
+
+    #[test]
+    fn check_out_clears_barcode_and_frees_the_number() {
+        let db = Db::open_in_memory().unwrap();
+        let mut a = sample_item("ของ ก", 5, 0);
+        a.barcode = Some("10000".to_string());
+        let id = add_item(&db.conn, &a).unwrap();
+
+        check_out(&db.conn, id, None, 2, "เบิกใช้").unwrap();
+
+        let it = list_items(&db.conn).unwrap();
+        assert_eq!(it[0].quantity, 3);
+        assert_eq!(it[0].barcode, None, "เบิกออกแล้วบาร์โค้ดต้องเป็นค่าว่าง");
+
+        // เลขที่ถูกปล่อยคืน นำไปใช้กับของใหม่ได้
+        let mut b = sample_item("ของ ข", 1, 0);
+        b.barcode = Some("10000".to_string());
+        assert!(add_item(&db.conn, &b).is_ok());
+    }
+
+    #[test]
+    fn update_item_rejects_duplicate_but_allows_keeping_own_barcode() {
+        let db = Db::open_in_memory().unwrap();
+        let mut a = sample_item("ของ ก", 1, 0);
+        a.barcode = Some("10000".to_string());
+        let id_a = add_item(&db.conn, &a).unwrap();
+
+        let mut b = sample_item("ของ ข", 1, 0);
+        b.barcode = Some("10001".to_string());
+        add_item(&db.conn, &b).unwrap();
+
+        // แก้ ก ให้ใช้บาร์โค้ดของ ข → ต้องถูกปฏิเสธ
+        let mut dup = sample_item("ของ ก", 1, 0);
+        dup.barcode = Some("10001".to_string());
+        assert!(update_item(&db.conn, id_a, &dup).is_err());
+
+        // แก้ ก โดยคงบาร์โค้ดเดิมของตัวเอง → ต้องได้
+        let mut same = sample_item("ของ ก แก้ชื่อ", 2, 0);
+        same.barcode = Some("10000".to_string());
+        assert!(update_item(&db.conn, id_a, &same).is_ok());
     }
 
     #[test]
