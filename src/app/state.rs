@@ -76,6 +76,19 @@ impl Default for CheckInOutForm {
     }
 }
 
+/// ผลลัพธ์ของการรับเข้า/เบิกออกครั้งล่าสุด (ไว้แสดงเป็นการ์ดยืนยัน)
+pub struct TxResult {
+    pub is_in: bool,
+    pub item_name: String,
+    pub qty: i64,
+    pub before: i64,
+    pub after: i64,
+    pub unit: String,
+    pub user: String,
+    pub time: String,
+    pub barcode_cleared: bool,
+}
+
 /// ตัวกรองในแท็บประวัติ
 #[derive(Default)]
 pub struct HistoryFilter {

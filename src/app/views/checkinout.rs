@@ -26,6 +26,12 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             ui.add_space(8.0);
         }
 
+        // ── การ์ดผลลัพธ์รายการล่าสุด ──
+        if let Some(r) = &app.last_tx {
+            result_card(ui, r);
+            ui.add_space(10.0);
+        }
+
         // ── การ์ดฟอร์ม ──
         egui::Frame::group(ui.style())
             .inner_margin(egui::Margin::same(16))
@@ -168,6 +174,70 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     }
 }
 
+/// การ์ดยืนยันผลการรับเข้า/เบิกออกครั้งล่าสุด
+fn result_card(ui: &mut egui::Ui, r: &crate::app::state::TxResult) {
+    use egui::{Align, CornerRadius, Layout, Margin, RichText, Stroke};
+    let green = egui::Color32::from_rgb(16, 124, 16);
+    let red = egui::Color32::from_rgb(196, 43, 28);
+    let qty_color = if r.is_in { green } else { red };
+    let sign = if r.is_in { "+" } else { "-" };
+    let title = if r.is_in { "รับเข้าสำเร็จ" } else { "เบิกออกสำเร็จ" };
+
+    egui::Frame::new()
+        .fill(green.gamma_multiply(0.12))
+        .stroke(Stroke::new(1.0, green.gamma_multiply(0.5)))
+        .corner_radius(CornerRadius::same(10))
+        .inner_margin(Margin::same(14))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+
+            // หัวการ์ด: จุดเขียว + หัวข้อ + เวลา (ชิดขวา)
+            ui.horizontal(|ui| {
+                let (dot, _) = ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
+                ui.painter().rect_filled(dot, CornerRadius::same(5), green);
+                ui.add_space(4.0);
+                ui.label(RichText::new(title).size(15.0).strong().color(green));
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    ui.weak(&r.time);
+                });
+            });
+            ui.add_space(8.0);
+
+            egui::Grid::new("tx_result_grid")
+                .num_columns(2)
+                .spacing([12.0, 6.0])
+                .min_col_width(84.0)
+                .show(ui, |ui| {
+                    ui.label("ของ");
+                    ui.label(RichText::new(&r.item_name).strong());
+                    ui.end_row();
+
+                    ui.label("จำนวน");
+                    ui.label(
+                        RichText::new(format!("{}{} {}", sign, r.qty, r.unit))
+                            .strong()
+                            .color(qty_color),
+                    );
+                    ui.end_row();
+
+                    ui.label("คงเหลือ");
+                    ui.label(
+                        RichText::new(format!("{} → {} {}", r.before, r.after, r.unit)).strong(),
+                    );
+                    ui.end_row();
+
+                    ui.label("ผู้ทำรายการ");
+                    ui.label(&r.user);
+                    ui.end_row();
+                });
+
+            if r.barcode_cleared {
+                ui.add_space(6.0);
+                ui.weak("บาร์โค้ดถูกปล่อยคืน (ของหมดแล้ว)");
+            }
+        });
+}
+
 /// แถบเตือนแบบมีพื้นหลังอ่อน
 fn warning_banner(ui: &mut egui::Ui, text: &str) {
     let accent = egui::Color32::from_rgb(200, 120, 0);
@@ -214,6 +284,14 @@ fn do_transaction(app: &mut App, kind: TxType) {
     let user = app.current_user;
     let item_name = app.item_name(item_id);
 
+    // ข้อมูลก่อนทำรายการ (จำนวนคงเหลือ + หน่วย) ไว้แสดงในการ์ดผลลัพธ์
+    let (before, unit) = app
+        .items
+        .iter()
+        .find(|i| i.id == item_id)
+        .map(|i| (i.quantity, i.unit.clone()))
+        .unwrap_or((0, String::new()));
+
     let result = match kind {
         TxType::In => queries::check_in(&app.db.conn, item_id, user, qty, &note),
         TxType::Out => queries::check_out(&app.db.conn, item_id, user, qty, &note),
@@ -221,10 +299,35 @@ fn do_transaction(app: &mut App, kind: TxType) {
 
     match result {
         Ok(_) => {
+            let is_in = matches!(kind, TxType::In);
+            let after = if is_in { before + qty } else { before - qty };
+            let user_name = {
+                let n = app.user_name(user);
+                if n.is_empty() { "ไม่ระบุ".to_string() } else { n }
+            };
+            app.set_ok(format!(
+                "{} \"{}\" {} {} สำเร็จ — คงเหลือ {} {}",
+                kind.label_th(),
+                item_name,
+                qty,
+                unit,
+                after,
+                unit,
+            ));
+            app.last_tx = Some(crate::app::state::TxResult {
+                is_in,
+                item_name,
+                qty,
+                before,
+                after,
+                unit,
+                user: user_name,
+                time: chrono::Local::now().format("%Y-%m-%d %H:%M").to_string(),
+                barcode_cleared: !is_in && after == 0,
+            });
             app.refresh_all();
-            app.cio.note.clear();
-            app.cio.qty = 1;
-            app.set_ok(format!("{} \"{}\" จำนวน {} สำเร็จ", kind.label_th(), item_name, qty));
+            // ล้างฟอร์มทั้งหมดหลังทำรายการสำเร็จ
+            app.cio = crate::app::state::CheckInOutForm::default();
         }
         Err(e) => app.set_err(format!("{}ไม่สำเร็จ: {}", kind.label_th(), e)),
     }

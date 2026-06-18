@@ -305,11 +305,20 @@ pub fn check_out(
         bail!("จำนวนคงเหลือไม่พอ (เหลือ {})", current);
     }
     let now = now_iso();
-    // เบิกออกแล้วเคลียร์บาร์โค้ดเป็น NULL (ปล่อยเลขคืน — NULL ซ้ำกันได้)
-    tx.execute(
-        "UPDATE items SET quantity = quantity - ?1, barcode = NULL, updated_at = ?2 WHERE id = ?3",
-        params![qty, now, item_id],
-    )?;
+    let remaining = current - qty;
+    if remaining == 0 {
+        // เบิกจนหมด (เหลือ 0) → เคลียร์บาร์โค้ดเป็น NULL (ปล่อยเลขคืน — NULL ซ้ำกันได้)
+        tx.execute(
+            "UPDATE items SET quantity = 0, barcode = NULL, updated_at = ?1 WHERE id = ?2",
+            params![now, item_id],
+        )?;
+    } else {
+        // ยังเหลือ > 0 → คงบาร์โค้ดไว้
+        tx.execute(
+            "UPDATE items SET quantity = ?1, updated_at = ?2 WHERE id = ?3",
+            params![remaining, now, item_id],
+        )?;
+    }
     tx.execute(
         "INSERT INTO transactions (item_id, user_id, type, quantity, note, timestamp) \
          VALUES (?1, ?2, 'OUT', ?3, ?4, ?5)",
@@ -508,17 +517,23 @@ mod tests {
     }
 
     #[test]
-    fn check_out_clears_barcode_and_frees_the_number() {
+    fn check_out_clears_barcode_only_when_quantity_reaches_zero() {
         let db = Db::open_in_memory().unwrap();
         let mut a = sample_item("ของ ก", 5, 0);
         a.barcode = Some("10000".to_string());
         let id = add_item(&db.conn, &a).unwrap();
 
+        // เบิกบางส่วน เหลือ 3 (> 0) → บาร์โค้ดต้องคงอยู่
         check_out(&db.conn, id, None, 2, "เบิกใช้").unwrap();
-
         let it = list_items(&db.conn).unwrap();
         assert_eq!(it[0].quantity, 3);
-        assert_eq!(it[0].barcode, None, "เบิกออกแล้วบาร์โค้ดต้องเป็นค่าว่าง");
+        assert_eq!(it[0].barcode.as_deref(), Some("10000"), "ยังเหลือ > 0 ต้องคงบาร์โค้ด");
+
+        // เบิกจนหมด เหลือ 0 → บาร์โค้ดถูกเคลียร์
+        check_out(&db.conn, id, None, 3, "เบิกหมด").unwrap();
+        let it = list_items(&db.conn).unwrap();
+        assert_eq!(it[0].quantity, 0);
+        assert_eq!(it[0].barcode, None, "เหลือ 0 ต้องเคลียร์บาร์โค้ด");
 
         // เลขที่ถูกปล่อยคืน นำไปใช้กับของใหม่ได้
         let mut b = sample_item("ของ ข", 1, 0);

@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use crate::db::models::{Category, Item, Location, Transaction, User};
 use crate::db::{queries, Db};
-use state::{CheckInOutForm, HistoryFilter, ItemFilter, ItemForm, QuickAdd, Status, Tab};
+use state::{CheckInOutForm, HistoryFilter, ItemFilter, ItemForm, QuickAdd, Status, Tab, TxResult};
 use theme::Theme;
 
 const SETTING_THEME: &str = "theme";
@@ -55,6 +55,8 @@ pub struct App {
     pub item_form: ItemForm,
     pub item_filter: ItemFilter,
     pub cio: CheckInOutForm,
+    /// ผลการรับเข้า/เบิกออกครั้งล่าสุด (แสดงเป็นการ์ดยืนยัน)
+    pub last_tx: Option<TxResult>,
     pub history_filter: HistoryFilter,
     pub alert_days: i64,
     pub quick: QuickAdd,
@@ -86,6 +88,7 @@ impl App {
             item_form: ItemForm::default(),
             item_filter: ItemFilter::default(),
             cio: CheckInOutForm::default(),
+            last_tx: None,
             history_filter: HistoryFilter::default(),
             alert_days: 30,
             quick: QuickAdd::default(),
